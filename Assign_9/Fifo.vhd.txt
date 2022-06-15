@@ -1,0 +1,269 @@
+library IEEE; -- importing required library
+use IEEE.std_logic_1164.all; 
+use IEEE.numeric_std.all;   
+use IEEE.std_logic_unsigned.all; 
+
+
+
+entity Fifo is    -- Fifo entity defined here
+
+    Port (clk : in  STD_LOGIC;  -- FPGA clock of 10ns time period
+          Is_Queue_empty : out  STD_LOGIC;  -- LED which show whether Queue empty or not
+          Is_Queue_full : out  STD_LOGIC;  --LED whcich indicate Queue is full or not
+          read_enable : in  STD_LOGIC;  -- push Button for Reading data from Queue
+          write_enable : in  STD_LOGIC;  -- push Button for Writing data into Queue
+	      Output_LED : out STD_LOGIC_VECTOR ( 6 downto 0); -- Cathode for 7 seg display
+	      Anode_Activate : out STD_LOGIC_VECTOR ( 3 downto 0); -- common anode for 7 seg
+	      Input_data : in  STD_LOGIC_VECTOR (15 downto 0)); -- Input data given from Switch
+end Fifo;
+
+architecture Behavioral of Fifo is-- Fifo Architectural bheviour starts from here
+
+  component BRAM is
+  port (
+    BRAM_PORTA_addr : in STD_LOGIC_VECTOR ( 2 downto 0 ); -- indicate address vector of BRAM ( whose size '8' tell tha depth of BRAM which is 8 here)
+    BRAM_PORTA_clk : in STD_LOGIC;  -- BRAM clk
+    BRAM_PORTA_din : in STD_LOGIC_VECTOR ( 15 downto 0 );  --BRAM input
+    BRAM_PORTA_dout : out STD_LOGIC_VECTOR ( 15 downto 0 );  -- BRAM ouput 
+    BRAM_PORTA_en : in STD_LOGIC;  -- bRAM enable logic
+    BRAM_PORTA_we : in STD_LOGIC_VECTOR ( 0 to 0 )  -- BRAM write enable vector
+  );
+  end component BRAM;
+
+
+ 
+signal Q_full : std_logic := '0'; -- variabel which  have current info regarding Queue full or not
+signal Q_empty : std_logic :='1'; -- variable which have current info whether Queue empty or not 
+
+signal W_pointer : std_logic_vector(2 downto 0) := (others => '0');  -- Write pointer of circular Queue
+signal R_pointer : std_logic_vector(2 downto 0):= (others => '0'); -- Read pointer of circular Queue 
+
+signal n0,n1,n2,n3,p0,p1,p2,p3 : STD_LOGIC ; -- defining some signals which we are going to use afterwards
+signal which_led : STD_LOGIC_VECTOR (3 downto 0) := (others => '0');   -- another vector
+
+signal Read_data : STD_LOGIC_VECTOR (15 downto 0) := "0000000000000000"; -- Used to store data read from  BRAM  
+
+signal cnt : integer := 0;  -- integer variable used for LED display
+signal count : integer :=0;    -- integer used for Debouncing of push button
+signal count1 : integer := 0;   -- used for Write/push operation 
+signal count2: integer :=0;     -- used for Read/pop operation
+signal cnt1 : integer :=0;
+signal cnt2: integer :=0;
+signal Queue_size : integer :=0;    -- use to store current Queue size
+signal en : std_logic :='0';        -- use to enable/disable BRAM
+signal we: std_logic_vector(0 to 0) :="0";  -- use to Write enable BRAM
+signal BRAM_addr : std_logic_vector (2 downto 0):= (others => '0');  -- used to assging address to BRAM
+signal temp_w : std_logic_vector(15 downto 0):= "0000000000000000";  -- tempvariable 
+signal temp_R : std_logic_vector(15 downto 0) := "0000000000000000";
+signal new_clk: std_logic :='0';  -- clock used for Push/Pop operation
+signal prevW: std_logic :='0';  -- variable used to avoid multiple push operaiton
+signal prevR : std_logic := '0';  -- variable used to avoid multiple pop operation
+
+begin
+
+A : BRAM port Map(BRAM_PORTA_addr => BRAM_addr  ,BRAM_PORTA_clk => clk , BRAM_PORTA_din =>temp_w, BRAM_PORTA_dout=>Read_data,BRAM_PORTA_en =>en ,BRAM_PORTA_we=>we);  -- port mapping of Fifo Port to BRAM Port 
+
+
+seven_seg_display : process(which_led)   -- logic for 7 segment led display using Boolean expression
+
+
+begin
+
+
+	n0 <= NOT which_led(0);  -- giving values to some of defined signals using which_led vector
+	n1 <= NOT which_led(1);
+	n2 <= NOT which_led(2);
+	n3 <= NOT which_led(3);
+
+	p0 <=  which_led(0);
+	p1 <=  which_led(1);
+	p2 <=  which_led(2);
+	p3 <=  which_led(3);
+
+
+
+    ---- logic for all of the 7 leds defined using karnaugh map on the above signals
+
+    Output_LED(0) <=   (n2 AND p3  AND p0 AND p1 ) OR (n3 AND n2 AND n1 AND p0) OR  (p3 AND p2 AND n1 AND p0) OR  (n3 AND p2 AND n1 AND n0);
+      
+    Output_LED(1) <=   (p0 AND p1 AND p3) OR (p2 AND p1 AND n0)  OR (p2 AND p3 AND n0 AND n1) OR (n3 AND p2 AND n1 AND p0); 
+    
+    Output_LED(2) <=  (p1 AND p2 AND p3) OR (n2 AND n3 AND p1 AND n0) OR (p2 AND p3 AND n0);
+    
+    Output_LED(3) <=  (n3 AND p2 AND n1 AND n0) OR (n1 AND n2 AND n3 AND p0) OR  (p3 AND n2 AND p1 AND n0) OR  (p0 AND  p1 AND p2);
+                      
+    Output_LED(4) <= (n1 AND p2 AND n3) OR (n2 AND n1 AND p0) OR (p0 AND n3);
+    
+    Output_LED(5) <= (n2 AND n3 AND p0) OR  (n2 AND n3 AND p1)  OR (p3 AND p2 AND n1 AND p0) OR (n3 AND p1 AND p0);
+    
+    Output_LED(6) <= (n1 AND n2 AND n3) OR (p2 AND p3 AND n1 AND n0) OR (n3 AND p0 AND p1 AND p2);
+    
+          
+end process;
+
+debouncing_and_LED_display : process(clk) -- debouncing condition is implemented here 
+begin
+    if rising_edge(clk) then  
+    
+	    if(count = 1000000) then   -- debounding logic (basically creating new clock of 100HZ
+	          new_clk <= not new_clk;
+	          count<=0;
+	    else 
+	       count <=count+1;          -- counter use for generating clock of frequency 100Hz
+	    end if;
+	    
+	    cnt <= cnt +1;                -- this counter use to turn on 7 seg leds
+	    
+	   
+      if((cnt mod 4000 ) < 1000) then   -- boolean expression for different anode activation 
+        Anode_Activate <= "1110";
+        which_led(0) <= temp_R(0);
+        which_led(1) <= temp_R(1);
+        which_led(2) <= temp_R(2);
+        which_led (3) <= temp_R(3);
+      
+      elsif((cnt mod 4000) < 2000 ) then 
+        Anode_Activate <= "1101";
+        which_led(0) <= temp_R(4);
+        which_led(1) <= temp_R(5);
+        which_led(2) <= temp_R(6);
+        which_led (3) <= temp_R(7);
+        
+      elsif((cnt mod 4000) < 3000 ) then 
+        Anode_Activate <= "1011";
+        which_led(0) <= temp_R(8);
+        which_led(1) <= temp_R(9);
+        which_led(2) <= temp_R(10);
+        which_led(3) <= temp_R(11);
+        
+      elsif((cnt mod 4000) < 4000 ) then 
+        Anode_Activate <= "0111";
+        which_led(0) <= temp_R(12);
+        which_led(1) <= temp_R(13);
+        which_led(2) <= temp_R(14);
+        which_led(3) <= temp_R(15);
+      else Anode_Activate <="1111";
+      end if;
+                   
+  end if;
+
+	  
+end process;
+
+
+Fifo_operation : process(new_clk)  -- process for Queue Write and Read operation
+begin
+
+  if(rising_edge(new_clk)) then -- doing operation of "push" and "pop"" in queue at rising edge of new_clk
+     
+
+        
+     if(write_enable='0') then -- logic for avoding multiple writing in one push button press
+      prevW <='0';
+     end if;
+     
+     if(read_enable='0') then  -- logic for avoding multiple read in one press of pushButton
+       prevR <='0';
+     end if;
+     
+     if(count1=1) then      -- waiting for 3 clock cycle for Write operation
+       cnt1 <= cnt1+1;
+     end if;
+     
+     if(count2=1) then      -- waiting for 3 clock cycle for Read operation
+       cnt2 <=cnt2+1;
+      end if;
+      
+      if(cnt1=2) then      -- complete Write operation 
+          count1 <=0;
+          cnt1<=0;
+          we <="0";
+          en <='0';  -- Disabling BRAM
+          
+      end if;
+             
+         
+     if(cnt2=2) then     -- Start Read operation
+         
+         Queue_size <= Queue_size -1;   -- decrease size of Queue after pop operation
+         temp_R <= Read_data;        -- reading data for BRAM output 
+         R_pointer <= R_pointer+'1';         -- incrementing Read pointer 
+       
+         if(R_pointer=W_pointer)then     -- check whether Queue is empty or not
+          
+              Q_empty <='1' ;
+              Is_Queue_empty <=Q_empty;
+         else Q_empty <='0' ;
+              Is_Queue_empty <= Q_empty;
+         end if;
+         
+         count2 <=0;
+         cnt2<=0;
+         en <='0';  --Disabling BRAM
+
+     end if;
+         
+         
+     if   write_enable='1' and not Q_full = '1' and prevW='0' then  --Write operation
+     
+          en <='1';  -- Enabling BRAM
+          we<= "1";
+          prevW <='1';
+          count1 <=1;
+          BRAM_addr <= W_pointer; -- assiging address to BRAM where write operation to be perfromed
+          
+          Queue_size <= Queue_size+1;  -- increasing Queue size after push operation
+          
+          temp_w <=Input_data;
+          
+          if(W_pointer+'1' =R_pointer) then  -- Checking whether Queue is full or not
+              Q_full <= '1';
+              Is_Queue_full <=Q_full;
+          else Q_full <='0';
+              Is_Queue_full<=Q_full;
+          end if;
+          
+          W_pointer <=  W_pointer+'1'; -- incrementing Write pointer by 1 as one element get  pushed into it
+         
+      
+     elsif (read_enable='1' and not Q_empty = '1' and prevR='0') then --Read operaiton initiation
+     
+         en <='1'; -- Enabling BRAM
+         prevR <='1';
+         count2<=1;
+         BRAM_addr <= R_pointer;  -- Asssinging reading address to BRAM address
+            
+     end if;
+         
+         
+     if(R_pointer=W_pointer and Queue_size /=8) then  -- corner condition  to check regardign queue empyt or not
+          Q_empty <='1';
+          Is_Queue_empty <=Q_empty; 
+     else 
+          Q_empty <='0'; 
+          Is_Queue_empty <=Q_empty; 
+     end if;
+  
+     if(W_pointer+'1' = R_pointer  and Queue_size /= 7) then  -- corner condition to check for whether Queue is full or not
+     
+          Q_full <= '1';
+          Is_Queue_full <=Q_full;
+     else Q_full <='0'; 
+          Is_Queue_full<=Q_full; 
+     end if;
+     
+     if(Queue_size = 8) then  -- corner case (when Queue is full)
+       Q_full <='1';
+       Is_Queue_full <=Q_full;
+     end if;
+     
+     if(Queue_size=1) then   -- corner case when Queue has just 1 element
+       Q_empty <='0';
+       Is_Queue_empty <=Q_empty;
+     end if;
+         
+
+  end if;
+end process;
+
+end Behavioral;

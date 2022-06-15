@@ -1,0 +1,138 @@
+library IEEE;                    -- importing standard libraries which we will be using
+use IEEE.STD_LOGIC_unsigned.ALL;      -- importing the unsigned part just to make sure we add to vectors also.
+use IEEE.STD_LOGIC_1164.ALL;  
+use IEEE.NUMERIC_STD.ALL;
+
+entity Timer is
+    Generic(
+    baud_rate : integer:= 9600;
+    middle_point_divider : integer :=2;
+    next_bit_after : integer  :=16 ;
+    total_counts_1s : integer := 100000000
+);
+    
+    Port(
+        rx_clk : IN STD_LOGIC;   -- standard clock of 100Mhz
+        Output_LED : OUT STD_LOGIC_VECTOR(6 downto 0);  -- to display digit on 7 seg display
+        Anode_Activate : OUT STD_LOGIC_VECTOR(3 DOWNTO 0);
+        reset_bt : IN STD_LOGIC;  -- reset button for receiver and tranmitter
+        tx_start_bt : IN STD_LOGIC;    -- push button used to start transmission
+        empty : out std_logic;
+        reset_tx: out std_logic;    -- led to check working of reset button
+        rx_input_usb_232 : IN STD_LOGIC;  -- standrd Rx_in
+        tx_output_usb_232 : OUT STD_LOGIC   -- standard Tx_out
+    );
+end Timer;
+
+Architecture Behavioral of Timer is 
+
+    Component Memory is 
+
+
+    Port (clk : in  STD_LOGIC;  -- FPGA clock of 10ns time period
+        --  Is_Queue_empty : out  STD_LOGIC;  -- LED which show whether Queue empty or not
+         -- Is_Queue_full : out  STD_LOGIC;  --LED whcich indicate Queue is full or not
+          read_enable : in  STD_LOGIC;  -- push Button for Reading data from Queue
+          write_enable : in  STD_LOGIC;  -- push Button for Writing data into Queue
+          tx_data : out STD_LOGIC_VECTOR( 7 downto 0);
+	      Output_LED : out STD_LOGIC_VECTOR ( 6 downto 0); -- Cathode for 7 seg display
+	      check_tx_en :in STD_LOGIC;
+	      Anode_Activate : out STD_LOGIC_VECTOR ( 3 downto 0); -- common anode for 7 seg
+	      tx_en :Out STD_LOGIC;
+	      Input_data : in  STD_LOGIC_VECTOR (7 downto 0)); -- Input data given from Switch
+    end Component;
+
+    Component Receiver is
+        Generic(
+            baud_rate : integer;
+            middle_point_divider : integer;
+            next_bit_after : integer;
+            total_counts_1s : integer 
+        );
+        
+        Port (
+            rx_in : IN std_logic;                -- the rx_input in the board
+            reset_button : IN std_logic;            -- the reset button
+            tx_st_rx_full : OUT std_logic;     
+            rx_clock : IN std_logic;                   --  the clock we will be using
+            vect_rs_data : OUT STD_LOGIC_VECTOR(7 DOWNTO 0)  --received data store after 8 bit data reading 
+            );        
+    
+    end component;
+
+    Component Transmitter is
+        Generic(
+            baud_rate : integer;
+            middle_point_divider : integer;
+            next_bit_after : integer ;
+            total_counts_1s : integer
+         );
+         
+    Port(
+        tx_clock : IN std_logic;      -- the tx_clock which we have used taken as input
+        id_tx : IN std_logic;      -- the id_tx input taken as the bit whether transmission started or not
+        storing_vector_tx_data : IN STD_LOGIC_VECTOR(7 DOWNTO 0);          -- the storing vector which is basically the bits recieved from reciever
+        tx_output_out : OUT std_LOGIC;           -- the output of the transmitter part sending bit by bit 
+        reset_button : IN std_LOGIC;    -- reset button for trasmitter
+        tx_reset_check: out std_logic;  -- reset button checking led
+        tx_empty : OUT STD_LOGIC     -- empty checking signals
+       );
+    end Component;
+
+
+    signal rx_full : STD_LOGIC;
+    signal rx_data  : STD_LOGIC_VECTOR(7 DOWNTO 0);
+    signal tx_data : STD_LOGIC_VECTOR(7 DOWNTO 0);
+    signal wr_addr : STD_LOGIC_VECTOR(16 DOWNTO 0);
+    signal rd_addr : STD_LOGIC_VECTOR(16 DOWNTO 0);    
+    signal Id_tx : std_logic ;
+    signal tx_empty : std_logic;
+    signal wen  : std_LOGIC;
+
+begin
+              -- port mapping of Receiver , Tranmitter and Memory
+              
+    A : Receiver Generic Map(  
+    baud_rate => 9600,
+    middle_point_divider => 2,
+    next_bit_after => 16,
+    total_counts_1s => 100000000
+    )
+    Port Map(
+    rx_in => rx_input_usb_232  ,
+    tx_st_rx_full  => rx_full , 
+    reset_button => reset_bt,
+    rx_clock => rx_clk , 
+    vect_rs_data => rx_data 
+    );
+    
+    B : Transmitter 
+    Generic Map(
+    baud_rate => 9600,
+    middle_point_divider => 2,
+    next_bit_after => 16,
+    total_counts_1s => 100000000
+    )
+    Port Map(
+    tx_clock =>rx_clk, 
+    id_tx => Id_tx  , 
+    tx_reset_check => reset_tx,
+    storing_vector_tx_data => tx_data, 
+    tx_output_out  => tx_output_usb_232, 
+    reset_button => reset_bt , 
+    tx_empty =>tx_empty
+    );
+
+    D : Memory 
+
+    Port Map (
+    write_enable => rx_full, 
+    clk => rx_clk, 
+    read_enable => tx_start_bt, 
+    Input_data => rx_data , 
+    tx_en => Id_tx,
+    check_tx_en => tx_empty,
+    Anode_Activate => Anode_Activate,
+    Output_LED => Output_LED,
+    tx_data => tx_data);
+end Behavioral;

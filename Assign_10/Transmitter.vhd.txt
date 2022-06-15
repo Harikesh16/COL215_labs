@@ -1,0 +1,101 @@
+library IEEE;                    -- importing standard libraries which we will be using
+use IEEE.STD_LOGIC_1164.ALL;  
+use IEEE.STD_LOGIC_unsigned.all;      -- importing the unsigned part just to make sure we add to vectors also.
+
+entity Transmitter is               -- defining the entity for the Transmitter 
+Generic(
+    baud_rate : integer;
+    middle_point_divider : integer;
+    next_bit_after : integer;
+    total_counts_1s : integer
+);
+  Port (
+    tx_clock : IN std_logic;      -- the tx_clock which we have used taken as input
+    id_tx : IN std_logic;      -- the id_tx input taken as the bit whether transmission started or not
+    storing_vector_tx_data : IN std_logic_vector(7 downto 0);          -- the storing vector which is basically the bits recieved from reciever
+    tx_output_out : OUT std_LOGIC;          -- the output of the transmitter part sending bit by bit 
+    reset_button : IN std_LOGIC;   -- reset button for tranmission
+    tx_reset_check : out std_logic;   --checking reset working 
+    tx_empty : OUT STD_LOGIC    -- trasmitter empty check
+   );
+end Transmitter;
+
+architecture Behavioral of Transmitter is      -- defining the behavioral of the transmitter
+
+type fsm_state_type is (idle, start, read_and_tr, stop);  -- defining the fsm with the 4 states and initializing it with the idle state
+signal fsm_state : fsm_state_type := idle;
+signal db : integer range 0 to 10 :=0;
+signal temp : std_logic :='0'; 
+signal clk_counter :natural range 0 to 10000:= 0;
+signal new_small_tx_clock : std_logic := '0';
+signal cnt : integer range 0 to 605 :=0;
+signal bits_received : integer := 0;
+signal db1 : integer :=10;  
+
+begin         -- beginning of the architechture
+    process(reset_button, id_tx, new_small_tx_clock)        -- trigerring process on our tx_start bit and as well as the small clock and reset button
+    begin                                         -- beginning of the process
+        if(rising_edge(new_small_tx_clock)) then    -- rising edge of the small clock
+            if (reset_button = '1' and db1=10) then  --reset button and debouncing condition
+                
+                fsm_state <= idle;
+                tx_empty <= '1';
+                tx_output_out <= '1';
+                bits_received <= 0;
+                db <=0; 
+                tx_reset_check<='1';
+            else
+                tx_reset_check <='0';
+                if fsm_state = idle then                        -- case of fsm states in case of transmitter -- the case of ideal state
+                        if(id_tx = '1') then       --  when transmisson bit is 1 
+                            fsm_state <= start;      -- then start transmitting
+                            tx_empty <= '0';         -- corresping to the start state
+                            cnt <=0;
+                        --else cnt <=cnt+1;
+                        end if;
+               -- end if;      
+                elsif fsm_state = start then                     -- in case of start state
+                        bits_received<=0;             -- bits recieved 0
+                        tx_output_out <= '0';             -- tx_output set as 0;
+                        fsm_state<= read_and_tr;             -- start reading and transmitting
+                        tx_empty <= '0';  --- correspondingly tx_empty is equal to 0 state
+               -- end if;     
+                elsif fsm_state =read_and_tr then                                -- in read_and_tr state
+                        if(bits_received<8) then 
+                                 -- the bit recieved stored here
+                       --     tx_output_out <= storing_vector_tx_data(bits_received); 
+                            bits_received <= bits_received+1;      -- if bits recieved less than 8 then start recieving buit by bit and transmission
+                            tx_output_out <= storing_vector_tx_data(bits_received); --tx_output_out <= storing_vector_tx_data(bits_received); 
+                        else 
+
+                          if(cnt =600) then fsm_state <= idle;cnt <=0;
+                          else cnt <=cnt+1;
+                          end if;
+
+                          tx_output_out <= '1';
+                          tx_empty <= '1';
+                            
+                        end if;    
+
+               end if;
+
+          end if;
+        end if;
+      end process;
+        
+   process(tx_clock)            -- trigering process clock
+     begin                        -- begin
+        if(rising_edge(tx_clock)) then  -- if rising edge of tx_clock
+            clk_counter<= clk_counter+1;         -- counter increased by 1 on each clock rising edge
+            if(reset_button='1') then db <=db+1;
+            elsif(reset_button='0') then db <=0;
+            end if;
+            
+            if(clk_counter = (total_counts_1s/middle_point_divider)/baud_rate) then              -- calculations for transmitting per cycle
+                new_small_tx_clock <= not new_small_tx_clock;      -- the small clock is trigerred here
+                clk_counter<=0;
+            end if;
+       end if;
+     end process;     -- eending the ifs and as well as the processes
+
+end Behavioral;      -- ending ythe behavioral part

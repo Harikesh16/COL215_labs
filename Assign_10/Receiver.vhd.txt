@@ -1,0 +1,131 @@
+library IEEE;                    -- importing standard libraries which we will be using
+use IEEE.STD_LOGIC_1164.ALL;  
+use IEEE.STD_LOGIC_unsigned.all;      -- imporitng the unsigned part just to make sure we add to vectors also.
+
+entity Receiver is                    -- writing the entity of the receiver
+Generic(
+    baud_rate : integer;
+    middle_point_divider : integer;
+    next_bit_after : integer;
+    total_counts_1s : integer
+);
+Port (
+    rx_in : IN std_logic;                -- the rx_input in the board
+    reset_button : IN std_logic;            -- the reset button
+    tx_st_rx_full : OUT std_logic;     
+    rx_clock : IN std_logic;                   --  the clock we will be using
+    vect_rs_data : OUT std_logic_vector(7 downto 0)
+    );
+end Receiver;
+ 
+architecture Behavioral of Receiver is              -- the behavioral of receiver written here
+TYPE fsm_state_type is (idle, start, read, stop);      -- the fsm defined here with initially in idle state 
+signal fsm_state : fsm_state_type := idle;             -- signal fsm_state_type in idle state
+
+signal temp_count : natural range 0 to 700 := 0;   -- a temporary count
+signal modulo_count : integer :=0;                -- a modulo count for led activation
+signal db1 : integer :=10;                                             -- varibles for using debouncing in the buttons present
+signal new_clk : std_logic := '0';                 -- a new clock defined for trigerring after 1 cycle
+signal count8 : integer := 0;
+signal new_var : integer := 0;     -- defining a new int variable
+
+signal db: integer :=0;
+
+signal rx_reg_data : std_logic_vector(7 downto 0); -- defining a new register to store value
+signal vect_rs_data1 : std_logic_vector(7 downto 0); -- defining a new register to store value
+
+begin
+
+    process(vect_rs_data1)        -- trigerring new process on vect_rs_data
+    begin
+        vect_rs_data <= vect_rs_data1;
+
+    end process;
+            
+
+    process(new_clk, rx_in, reset_button)        -- trigerring a new process on these three clock, board input and reset button
+    begin
+    if(rising_edge(new_clk)) then   
+            -- if rising edge event
+        if(reset_button = '1' and db1=10) then 
+          
+            fsm_state <= idle;   
+            tx_st_rx_full <= '1';                  -- on resetting just move to the idle state
+             db <=0;                 -- here we will be doing the debouncing check for the reset button 
+            
+        else
+           
+            if fsm_state = idle then                             -- if idle state 
+                if(rx_in = '0') then                -- if input is 0 then start counting the number of 8's in count8
+                    count8 <= 1;
+                    fsm_state <= start;
+                    tx_st_rx_full <= '1';
+                end if;
+            --end if;    
+            elsif fsm_state = start then         -- in start state
+                if rx_in = '0' then 
+                    count8 <= count8+1;
+                    if(count8 = 7) then          -- if 8 one's are foind then just use it to start reading and set count8 to 0 again
+                        fsm_state <= read;
+                        new_var<=0; 
+                        count8 <= 0;
+                        tx_st_rx_full <= '1';
+                    end if;
+                else          -- if the rx_in is '1' then just move back to idle state and make count8 =0;
+                    fsm_state <= idle;
+                    count8 <= 0;
+                    tx_st_rx_full <= '1';            
+                end if;
+            --end if;
+            
+            elsif fsm_state = read then
+                if(count8 = 15) then                -- reading after cycle aster cycle 
+                    count8 <=0;
+                   -- vect_rs_data(new_var) <= rs_in;
+                    rx_reg_data(new_var) <= rx_in;              -- storing data in rx_in 
+                    new_var  <= new_var + 1;              -- new_var value increases
+            
+                -- count8 <= count8 + 1;
+                else
+                    count8 <= count8 + 1;                
+                end if;
+                
+                if(new_var = 8) then 
+                    vect_rs_data1 <= rx_reg_data;                   -- storing the data in two of the vectors
+                    vect_rs_data <= rx_reg_data;                     -- one is out to this file amd the other is just a temporary data used
+                    new_var<= 0;                                      -- making the new_var i.e. basically the bit counter as 0
+                    fsm_state <= stop;                                 -- fsm goes to stop state 
+                    tx_st_rx_full <= '0';
+                end if;
+            --end if;
+                
+            elsif fsm_state = stop then   -- stop state of receiver 
+                if(count8 =8) then
+                    fsm_state <= idle;
+                    tx_st_rx_full <= '1';
+                    count8 <=0;
+                else
+                    count8 <= count8+1;
+                end if;
+            end if;
+        end if;
+    end if; 
+    end process;
+
+
+    process(rx_clock)                 -- trigerring a new process on rx_clock
+        begin
+            if(rising_edge(rx_clock)) then             -- if there is a rising edge in the clock
+            modulo_count <= modulo_count +1;          -- adding 1 to modulo_count 
+            temp_count <= temp_count+1;              -- adding 1 to cycle count 
+            if(reset_button ='1') then db <=db+1;
+            elsif(reset_button='0') then db <=0;
+            end if;
+            if(temp_count = ((total_counts_1s/next_bit_after)/middle_point_divider)/baud_rate) then            -- the calculation for the number of cycles to read bits
+                new_clk <= not new_clk;               -- trigerring the new_clk part
+                temp_count <= 0;          -- temp count again changes to 0
+            end if;
+        end if;
+    end process;
+
+end Behavioral;
